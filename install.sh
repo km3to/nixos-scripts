@@ -115,6 +115,8 @@ rm -rf /mnt/tmp/nixos-config
 echo ">>> Detecting RAM and configuring swap size..."
 # Calculate RAM size in MB
 RAM_SIZE_MB=$(free -m | awk '/^Mem:/{print $2}')
+RAM_SIZE_GB=$(( (RAM_SIZE_MB + 1023) / 1024 ))
+RAM_SIZE_MB=$((RAM_SIZE_GB * 1024))
 echo "System has ${RAM_SIZE_MB}MB of RAM. Setting swap size in configuration.nix..."
 # Use sed to replace the placeholder with the actual RAM size.
 sed -i "s/__SWAP_SIZE_PLACEHOLDER__/${RAM_SIZE_MB}/" "${CONFIG_ON_TARGET}"
