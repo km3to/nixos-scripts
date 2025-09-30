@@ -86,8 +86,6 @@ if [ "$CONFIRMATION" != "yes" ]; then
     exit 0
 fi
 
-exit 0
-
 # --- PARTITIONING & FORMATTING (UEFI Example) ---
 echo ">>> Partitioning ${DISK}..."
 sgdisk --zap-all ${DISK}
@@ -165,6 +163,7 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
     extraGroups = [ "networkmanager" "wheel" ];
     initialHashedPassword = "$USER_PASS_HASH";
   };
+
   # Allow wheel group to use sudo
   security.sudo.wheelNeedsPassword = false;
 
