@@ -3,36 +3,86 @@
 # Stop on first error
 set -e
 
-# --- USER INPUT ---
-echo "--- Interactive NixOS Installer ---"
-echo "This script will partition a disk, install NixOS from a Git repo, and reboot."
-echo ""
 
-# Ask for the Git repository
-read -p "Enter your NixOS configuration Git repository URL: " GIT_REPO
-if [ -z "$GIT_REPO" ]; then
-    echo "Error: Git repository URL cannot be empty."
-    exit 1
+# --- DEFAULT VALUES ---
+DISK="/dev/sda"
+USER="km3to"
+PASSWD=""
+HOST="laptop"
+REPO="https://github.com/km3to/nixos-config.git"
+
+RAM_SIZE_MB=$(free -m | awk '/^Mem:/{print $2}')
+RAM_SIZE_GB=$(( (RAM_SIZE_MB + 1023) / 1024 ))
+SWAPFILE_SIZE=$((RAM_SIZE_GB * 1024))
+ 
+
+# --- PARSE PARAMS ---
+# in case of no params
+if [ $# -eq 0 ]; then
+  echo ""
+  echo "Available disks:"
+  lsblk -dp -o NAME,SIZE,MODEL,TYPE
+  echo ""
+  echo "for the -d <disk> (e.g., -d /dev/sda or -d /dev/nvme0n1)"
+  echo "For more info: $0 -? | $0 -h | $0 --help"
+  exit 0
 fi
 
-# Ask for the path to the configuration file inside the repo
-DEFAULT_CONFIG_PATH="configuration.nix" # A simpler default
-read -p "Path to configuration.nix in repo [${DEFAULT_CONFIG_PATH}]: " CONFIG_FILE_PATH
-# If user enters nothing, use the default
-CONFIG_FILE_PATH=${CONFIG_FILE_PATH:-$DEFAULT_CONFIG_PATH}
+# with params
+while getopts ":d:u:p:h:r:s" opt; do
+  case "$opt" in
+    d) DISK="$OPTARG" ;;
+    u) USER="$OPTARG" ;;
+    p) PASSWD="$OPTARG" ;;
+    h) HOST="$OPTARG" ;;
+    r) REPO="$OPTARG" ;;
+    s) SWAPFILE_SIZE="$OPTARG" ;;
+    h|\?)  # Help flag (-h or -?)
+      echo "Usage: $0 -d <disk> -u <user> -p <passwd> -h <hostname> -r <repo_config> -s <swapfile_size>"
+      echo ""
+      echo "  -d <disk>   	  optional  default: $DISK"
+      echo "  -u <user>  	  optional  default: $USER"
+      echo "  -p <passwd>  	  required  default: none" 
+      echo "  -h <hostname>  	  optional  default: $HOSTNAME"
+      echo "  -r <repo_config>    optional  default: $REPO"
+      echo "  -s <swapfile_size>  optional  default: $SWAPFILE_SIZE"
+      exit 0
+      ;;
+  esac
+done
 
-# List available disks and ask the user to choose one
-echo ""
-echo "Available block devices:"
-lsblk -d -o NAME,SIZE,MODEL,TYPE
-echo ""
-read -p "Enter the device to install NixOS on (e.g., /dev/sda or /dev/nvme0n1): " DISK
-
-# Verify that the chosen device is a valid block device
-if [ ! -b "$DISK" ]; then
-    echo "Error: '$DISK' is not a valid block device. Please choose from the list above."
-    exit 1
+# 🔒 Check for required options
+if [[ -z "$PASSWD" ]]; then
+  echo "Error: -p <passwd> is required."
+  echo "Usage: $0 -d <disk> -u <user> -p <passwd> -h <hostname> -r <repo_config> -s <swapfile_size>"
+  exit 1
 fi
+
+
+# --- USER EXPLANATION --
+echo ""
+echo "This script will partition a disk, install NixOS minimal, set in configuration.nix:"
+echo "   - bootloader"
+echo "   - swapfile"
+echo "   - network connection with a hostname"
+echo "   - user"
+echo "   - timezone and locale"
+echo "   - allowUnfree software"
+echo "   - commented dconf support for gtk"
+echo "   - sets a script that after boot will clone a config repo and set NixOS to use it"
+echo "and reboot."
+echo ""
+
+# --- DEBUG ---
+echo "DISK: $DISK"
+echo "USER: $USER"
+echo "PASSWD: $PASSWD"
+echo "HOST: $HOST"
+echo "REPO: $REPO"
+echo "SWAPFILE: $SWAPFILE_SIZE"
+
+exit 0
+
 
 # --- FINAL CONFIRMATION (SAFETY CHECK) ---
 echo ""
@@ -47,6 +97,7 @@ if [ "$CONFIRMATION" != "yes" ]; then
     echo "Installation cancelled by user."
     exit 0
 fi
+
 
 # --- PARTITIONING & FORMATTING (UEFI Example) ---
 echo ">>> Partitioning ${DISK}..."
@@ -74,11 +125,13 @@ echo ">>> Formatting partitions..."
 mkfs.fat -F 32 -n boot ${BOOT_PART}
 mkfs.ext4 -L nixos ${ROOT_PART}
 
+
 # --- MOUNTING ---
 echo ">>> Mounting filesystems..."
 mount ${ROOT_PART} /mnt
 mkdir -p /mnt/boot
 mount ${BOOT_PART} /mnt/boot
+
 
 # --- INSTALLATION ---
 echo ">>> Generating base NixOS configuration..."
