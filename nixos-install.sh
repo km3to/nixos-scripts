@@ -143,8 +143,6 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
 
   # Enable the SSH daemon.
   services.openssh.enable = true;
-  # Disallow root login for security.
-  services.openssh.permitRootLogin = "no";
 
   # Timezone and Locale
   time.timeZone = "$TIMEZONE";
@@ -203,6 +201,7 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
     serviceConfig = {
       Type = "oneshot";
       User = "$USER";
+      path = [ pkgs.git ];
       # This script will only run once.
       # It checks if the target directory already exists.
       ExecStart = pkgs.writeShellScript "clone-repo" ''
@@ -210,7 +209,7 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
         TARGET_DIR="/home/$USER/nixos-config"
         if [ ! -d "\$TARGET_DIR" ]; then
             echo "Cloning NixOS config repo to \$TARGET_DIR..."
-            su $USER -c "git clone $REPO \$TARGET_DIR"
+            git clone $REPO \$TARGET_DIR
             echo "Repo cloned. Please inspect it and then run 'sudo nixos-rebuild switch --flake .#$HOST'"
         else
             echo "Config repo directory already exists. Skipping clone."
