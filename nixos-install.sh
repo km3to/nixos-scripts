@@ -201,25 +201,22 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "oneshot";
-      User = "$USER";
-      path = [ pkgs.git pkgs.coreutils ]; 
-      # This script will only run once.
-      # It checks if the target directory already exists.
-      ExecStart = pkgs.writeShellScript "clone-repo" ''
-        set -e
-        echo "Waiting 5 seconds for network..."
-        sleep 5
-        
-        TARGET_DIR="/home/$USER/nixos-config"
-        if [ ! -d "\$TARGET_DIR" ]; then
-            echo "Cloning NixOS config repo to \$TARGET_DIR..."
-            git clone $REPO \$TARGET_DIR
-            echo "Repo cloned. Please inspect it and then run 'sudo nixos-rebuild switch --flake .#$HOST'"
-        else
-            echo "Config repo directory already exists. Skipping clone."
-        fi
-      '';
+      User = "km3to";
     };
+    path = [ pkgs.git pkgs.coreutils ];  # Move this outside serviceConfig
+    script = ''
+      set -e
+      echo "Waiting 5 seconds for network..."
+      sleep 5
+      TARGET_DIR="/home/km3to/nixos-config"
+      if [ ! -d "$TARGET_DIR" ]; then
+          echo "Cloning NixOS config repo to $TARGET_DIR..."
+          git clone https://github.com/km3to/nixos.git $TARGET_DIR
+          echo "Repo cloned. Please inspect it and then run 'sudo nixos-rebuild switch --flake .#laptop'"
+      else
+          echo "Config repo directory already exists. Skipping clone."
+      fi
+    '';
   };
 }
 EOF
