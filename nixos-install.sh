@@ -17,9 +17,7 @@ RAM_SIZE_GB=$(( (RAM_SIZE_MB + 1023) / 1024 ))
 # Default to RAM size, but not less than 4G
 SWAP_SIZE_GB=$(( RAM_SIZE_GB > 4 ? RAM_SIZE_GB : 4 ))
 
-
 # --- PARSE PARAMS ---
-# with params
 while getopts "d:u:h:r:s:?" opt; do
   case "$opt" in
     d) DISK="$OPTARG" ;;
@@ -27,18 +25,37 @@ while getopts "d:u:h:r:s:?" opt; do
     h) HOST="$OPTARG" ;;
     r) REPO="$OPTARG" ;;
     s) SWAP_SIZE_GB="$OPTARG" ;;
-    \?|*) # Help flag (-? or any other)
-      echo "Usage: $0 [-d <disk>] [-u <user>] [-h <hostname>] [-s <swap_gb>]"
+    \?|*) # Help flag
+      echo "Usage: $0 [-d <disk>] [-u <user>] [-h <hostname>] [-r <repo>] [-s <swap_gb>]"
       echo ""
       echo "  -d <disk>          Optional. Default: $DISK"
       echo "  -u <user>          Optional. Default: $USER"
-      echo "  -r <repo>		 Optional. Default: $REPO"
       echo "  -h <hostname>      Optional. Default: $HOST"
+      echo "  -r <repo>          Optional. Default: $REPO"
       echo "  -s <swap_gb>       Optional. Default: ${SWAP_SIZE_GB}GB"
       exit 0
       ;;
   esac
 done
+
+# --- VALIDATION ---
+# Check if running as root
+if [[ $EUID -ne 0 ]]; then
+   echo "ERROR: This script must be run as root (use sudo)" 
+   exit 1
+fi
+
+# Check if disk exists
+if [[ ! -b "$DISK" ]]; then
+    echo "ERROR: Disk $DISK does not exist!"
+    exit 1
+fi
+
+# Validate swap size is a number
+if ! [[ "$SWAP_SIZE_GB" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Swap size must be a number (got: $SWAP_SIZE_GB)"
+    exit 1
+fi
 
 # --- SECURE PASSWORD INPUT ---
 PASSWD=""
@@ -61,11 +78,11 @@ done
 
 # --- USER EXPLANATION & FINAL CONFIRMATION ---
 echo ""
-echo "========================== Available disks! ==========================="
+echo "========================== Available disks ==========================="
 lsblk -dp -o NAME,SIZE,MODEL,TYPE
-echo "======================================================================="
+echo "======================================================================"
 echo ""
-echo "======================== Installation Details ========================="
+echo "======================= Installation Details ========================="
 echo "Disk:           $DISK"
 echo "User:           $USER"
 echo "Hostname:       $HOST"
@@ -73,12 +90,12 @@ echo "Swap Size:      ${SWAP_SIZE_GB}G"
 echo "Timezone:       $TIMEZONE"
 echo "Locale:         $LOCALE"
 echo "Config Repo:    $REPO"
-echo "======================================================================="
+echo "======================================================================"
 echo ""
-echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-echo "!! WARNING: This will WIPE ALL DATA on the disk ${DISK}.            !!"
-echo "!! Make sure you have selected the correct disk and have backups.    !!"
-echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+echo "!! WARNING: This will WIPE ALL DATA on the disk ${DISK}.          !!"
+echo "!! Make sure you have selected the correct disk and have backups.  !!"
+echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 read -p "Type 'yes' to confirm and proceed with the installation: " CONFIRMATION
 
 if [ "$CONFIRMATION" != "yes" ]; then
@@ -86,16 +103,17 @@ if [ "$CONFIRMATION" != "yes" ]; then
     exit 0
 fi
 
-# --- PARTITIONING & FORMATTING (UEFI Example) ---
+# --- PARTITIONING & FORMATTING (UEFI) ---
 echo ">>> Partitioning ${DISK}..."
 sgdisk --zap-all ${DISK}
 sgdisk -n 1:1M:+1G    -t 1:ef00 -c 1:boot  "${DISK}" # 1GB EFI partition
-sgdisk -n 2:0:0       -t 2:8300 -c 2:nixos "${DISK}" # Root partition (rest of the disk)
+sgdisk -n 2:0:0       -t 2:8300 -c 2:nixos "${DISK}" # Root partition (rest of disk)
 
 partprobe "${DISK}"
 sleep 3
 
-if [[ $DISK == *"nvme"* ]]; then
+# Determine partition names (handle both SATA/SSD and NVMe naming)
+if [[ $DISK == *"nvme"* ]] || [[ $DISK == *"mmcblk"* ]]; then
     BOOT_PART="${DISK}p1"
     ROOT_PART="${DISK}p2"
 else
@@ -105,7 +123,7 @@ fi
 
 echo ">>> Formatting partitions..."
 mkfs.fat -F 32 -n boot "${BOOT_PART}"
-mkfs.ext4 -L nixos "${ROOT_PART}"
+mkfs.ext4 -F -L nixos "${ROOT_PART}"  # Added -F to force format
 
 # --- MOUNTING ---
 echo ">>> Mounting filesystems..."
@@ -118,12 +136,9 @@ echo ">>> Generating base NixOS configuration..."
 nixos-generate-config --root /mnt
 
 echo ">>> Generating hashed password..."
-# We need mkpasswd, which is in the `whois` package
 USER_PASS_HASH=$(nix-shell -p whois --command "mkpasswd -m sha-512 '$PASSWD'")
 
 echo ">>> Writing custom configuration.nix..."
-# Using a heredoc to create the configuration file from scratch.
-# This is cleaner than using `sed` for many changes.
 cat > /mnt/etc/nixos/configuration.nix << EOF
 { config, pkgs, ... }:
 
@@ -142,7 +157,19 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
   networking.networkmanager.enable = true;
 
   # Enable the SSH daemon.
-  services.openssh.enable = true;
+  services.openssh = {
+    enable = true;
+    settings = {
+      PermitRootLogin = "no";  # Security: disable root login
+      PasswordAuthentication = true;
+    };
+  };
+
+  # Firewall
+  networking.firewall = {
+    enable = true;
+    allowedTCPPorts = [ 22 ];  # SSH
+  };
 
   # Timezone and Locale
   time.timeZone = "$TIMEZONE";
@@ -173,34 +200,42 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
   # Allow unfree packages
   nixpkgs.config.allowUnfree = true;
 
+  # Enable flakes and nix-command
+  nix.settings.experimental-features = [ "nix-command" "flakes" ];
+
+  # Automatic garbage collection
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 30d";
+  };
+
   # Create a swap file
   swapDevices = [ { device = "/swapfile"; size = ${SWAP_SIZE_GB} * 1024; } ];
 
-  # List packages installed in system profile. To search, run:
-  # \$ nix search wget
+  # System packages
   environment.systemPackages = with pkgs; [
     vim
     git
     wget
     curl
+    htop
+    tree
   ];
 
   # This value determines the NixOS release from which the default
-  # settings for stateful data, like file locations and database versions
-  # on your system were taken. It‘s perfectly fine and recommended to leave
-  # this value at the release version of the first install of this system.
-  # Before changing this value read the documentation for this option
-  # (e.g. man configuration.nix or on https://nixos.org/nixos/options.html).
-  system.stateVersion = "23.11"; # Did you read the comment?
+  # settings for stateful data were taken.
+  system.stateVersion = "24.05"; # Update to current stable version
 
   # Post-boot script to clone your dotfiles
   systemd.services.clone-config-repo = {
     description = "Clone personal NixOS configuration from Git";
     after = [ "network-online.target" ];
-    requires = [ "network-online.target" ];
+    wants = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "oneshot";
+      RemainAfterExit = true;  # Prevent re-running on every boot
     };
     path = [ pkgs.git pkgs.coreutils ];
     script = ''
@@ -212,7 +247,8 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
           echo "Cloning NixOS config repo to \$TARGET_DIR..."
           git clone $REPO "\$TARGET_DIR"
           chown -R $USER:users "\$TARGET_DIR"
-          echo "Repo cloned. Please inspect it and then run 'sudo nixos-rebuild switch --flake .#laptop'"
+          echo "Repo cloned successfully to \$TARGET_DIR"
+          echo "Run: cd ~/nixos-config && sudo nixos-rebuild switch --flake .#$HOST"
       else
           echo "Config repo directory already exists. Skipping clone."
       fi
@@ -230,6 +266,17 @@ umount -R /mnt
 
 # --- FINAL INSTRUCTIONS ---
 echo ""
-echo ">>> Installation finished."
-echo ">>> You can now remove the installation media and reboot the system."
-echo ">>> After rebooting and logging in as '$USER', your config repo will be in ~/nixos-config."
+echo "========================================================================="
+echo ">>> Installation finished successfully!"
+echo "========================================================================="
+echo ""
+echo "Next steps:"
+echo "  1. Remove the installation media"
+echo "  2. Reboot the system: reboot"
+echo "  3. Log in as '$USER' with your password"
+echo "  4. Your config repo will be automatically cloned to ~/nixos-config"
+echo "  5. Apply your configuration:"
+echo "     cd ~/nixos-config"
+echo "     sudo nixos-rebuild switch --flake .#$HOST"
+echo ""
+echo "========================================================================="
