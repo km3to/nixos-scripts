@@ -197,6 +197,7 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
   systemd.services.clone-config-repo = {
     description = "Clone personal NixOS configuration from Git";
     after = [ "network-online.target" ];
+    requires = [ "network-online.target" ];
     wantedBy = [ "multi-user.target" ];
     serviceConfig = {
       Type = "oneshot";
