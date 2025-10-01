@@ -7,7 +7,7 @@ set -e
 DISK="/dev/sda"
 USER="km3to"
 HOST="laptop"
-REPO="https://github.com/km3to/nixos-config.git"
+REPO="https://github.com/km3to/nixos.git"
 TIMEZONE="Europe/Sofia"
 LOCALE="en_US.UTF-8"
 
