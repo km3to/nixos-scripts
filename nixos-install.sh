@@ -141,6 +141,11 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
   networking.hostName = "$HOST";
   networking.networkmanager.enable = true;
 
+  # Enable the SSH daemon.
+  services.openssh.enable = true;
+  # Disallow root login for security.
+  services.openssh.permitRootLogin = "no";
+
   # Timezone and Locale
   time.timeZone = "$TIMEZONE";
   i18n.defaultLocale = "$LOCALE";
