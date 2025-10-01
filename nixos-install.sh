@@ -201,11 +201,14 @@ cat > /mnt/etc/nixos/configuration.nix << EOF
     serviceConfig = {
       Type = "oneshot";
       User = "$USER";
-      path = [ pkgs.git ];
+      path = [ pkgs.git pkgs.coreutils ]; 
       # This script will only run once.
       # It checks if the target directory already exists.
       ExecStart = pkgs.writeShellScript "clone-repo" ''
         set -e
+        echo "Waiting 5 seconds for network..."
+        sleep 5
+        
         TARGET_DIR="/home/$USER/nixos-config"
         if [ ! -d "\$TARGET_DIR" ]; then
             echo "Cloning NixOS config repo to \$TARGET_DIR..."
